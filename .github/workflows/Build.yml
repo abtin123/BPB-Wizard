@@ -1,4 +1,3 @@
-
 name: Build and Release
 
 permissions:
@@ -27,54 +26,56 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
-
+        
       - name: Setup Go
+        id: go
         uses: actions/setup-go@v5
         with:
-          go-version: '^1.26'
+          go-version: ^1.26
 
       - name: Read version
         id: version
-        shell: bash
-        run: |
-          VERSION="$(cat VERSION)"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_ENV
 
-      - name: Build Wizard
-        run: make build VERSION="$VERSION" GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+      - name: Build and zip
+        run: make build VERSION=$VERSION GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
 
-      # Download worker.js only once, avoiding duplicate uploads
-      # from every operating-system build.
-      - name: Download Worker Panel
+      # Build the panel worker from the user's own panel repository and publish it
+      # as worker.js in this Wizard release. Only one matrix leg needs to do this.
+      - name: Check out panel source
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          curl --fail --location --retry 3 \
-            "https://github.com/abtin123/BPB-Worker-Panel/releases/latest/download/worker.js" \
-            --output dist/worker.js
-          test -s dist/worker.js
-          echo "worker.js downloaded successfully:"
-          ls -lh dist/worker.js
+        uses: actions/checkout@v4
+        with:
+          repository: abtin123/BPB-Worker-Panel
+          ref: main
+          path: panel-source
 
-      - name: Verify Worker Panel asset
+      - name: Set up Node.js for panel build
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        shell: bash
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build panel worker asset
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        working-directory: panel-source
         run: |
-          set -euo pipefail
-          test -f dist/worker.js
+          npm install
+          npm run check
+          npm run build
           test -s dist/worker.js
+          mkdir -p ../dist
+          cp dist/worker.js ../dist/worker.js
 
       - name: Read release note
         id: read_release
         shell: bash
         run: |
-          r="$(cat RELEASE.md)"
-          r="${r//'%'/'%25'}"
-          r="${r//$'\n'/'%0A'}"
-          r="${r//$'\r'/'%0D'}"
-          echo "RELEASE_BODY=$r" >> "$GITHUB_OUTPUT"
+          r=$(cat RELEASE.md)         
+          r="${r//'%'/'%25'}"                               
+          r="${r//$'\n'/'%0A'}"                             
+          r="${r//$'\r'/'%0D'}"                             
+          echo "RELEASE_BODY=$r" >> $GITHUB_OUTPUT          
 
       - name: Upload Release Assets
         uses: svenstaro/upload-release-action@v2
